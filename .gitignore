@@ -1,0 +1,3 @@
+.vscode/
+app/knowledge/curated_knowledge.py
+.env
