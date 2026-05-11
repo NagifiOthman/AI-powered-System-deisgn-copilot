@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class QAPair(BaseModel):
@@ -9,7 +9,8 @@ class QAPair(BaseModel):
 
 
 class CopilotRequest(BaseModel):
-    project_idea: str = Field(
+    project_idea: str | None = Field(
+        default=None,
         min_length=10,
         description="User project idea or product description.",
     )
@@ -18,13 +19,44 @@ class CopilotRequest(BaseModel):
         description="Optional answers to follow-up discovery questions.",
     )
 
+    @model_validator(mode="after")
+    def validate_minimum_context(self):
+        if self.project_idea:
+            return self
+        if not self.qa_context:
+            raise ValueError("Provide either project_idea or at least one qa_context answer.")
+        return self
 
-class DiscoveryQuestionsResponse(BaseModel):
-    questions: list[str] = Field(
-        description="Short, high-signal discovery questions to refine architecture recommendations.",
-        min_length=3,
-        max_length=8,
+
+class DiscoveryProgressRequest(BaseModel):
+    question_index: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description="Question index being answered. Use 0 to fetch the first question.",
     )
+    answer: str | None = Field(
+        default=None,
+        description="Answer for the specified question index (required for index 1..5).",
+    )
+
+    @model_validator(mode="after")
+    def validate_discovery_step(self):
+        if self.question_index == 0 and self.answer:
+            raise ValueError("Do not provide an answer when question_index is 0.")
+        if self.question_index > 0 and (self.answer is None or not self.answer.strip()):
+            raise ValueError("Provide a non-empty answer for question_index 1..5.")
+        return self
+
+
+class DiscoveryStepResponse(BaseModel):
+    total_questions: int = 5
+    answered_count: int
+    is_complete: bool
+    current_question_index: int | None
+    current_question: str | None
+    next_question_index: int | None
+    next_question: str | None
 
 
 class TechRecommendation(BaseModel):

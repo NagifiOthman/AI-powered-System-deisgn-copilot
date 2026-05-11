@@ -46,19 +46,51 @@ uvicorn app.main:app --reload
 - `POST /api/v1/full-plan`
 - `GET /health`
 
-## Example request
+## Discovery flow example (sequential)
+
+1) Start discovery (fetch first question):
 
 ```json
 {
-	"project_idea": "A SaaS platform where engineering teams generate system design docs from plain-language product requirements.",
+	"question_index": 0
+}
+```
+
+2) Submit one answer using the current question index:
+
+```json
+{
+	"question_index": 1,
+	"answer": "An AI copilot that generates system design plans from product ideas."
+}
+```
+
+Repeat step 2 for indexes 2..5 until `is_complete` is `true`.
+
+## Example planning request
+
+```json
+{
 	"qa_context": [
 		{
-			"question": "Expected user scale in year 1?",
-			"answer": "~5k monthly active users"
+			"question": "What are you trying to build ?",
+			"answer": "An AI copilot that generates system design plans from product ideas."
 		},
 		{
-			"question": "Any compliance requirements?",
-			"answer": "SOC2 readiness"
+			"question": "Who are your target users and what core problem are you solving for them?",
+			"answer": "Startup teams who need fast and reliable architecture guidance."
+		},
+		{
+			"question": "What are your expected scale and performance requirements in the first 12 months?",
+			"answer": "About 10k monthly users and low-latency API responses under 2 seconds."
+		},
+		{
+			"question": "What security/compliance constraints should the system satisfy (e.g., SOC2, GDPR, HIPAA)?",
+			"answer": "SOC2 readiness and GDPR baseline controls."
+		},
+		{
+			"question": "What is your MVP timeline and current team capacity?",
+			"answer": "An 8-week MVP with 2 backend and 1 frontend engineer."
 		}
 	]
 }
