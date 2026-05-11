@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes import router as copilot_router
-from app.config import settings
+from app.config import settings 
 
 app = FastAPI(
     title=settings.app_name,

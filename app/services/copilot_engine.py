@@ -10,38 +10,61 @@ from app.knowledge.curated_knowledge import CURATED_KNOWLEDGE_BASE
 from app.models import (
     CopilotRequest,
     DesignAdviceResponse,
-    DiscoveryQuestionsResponse,
+    DiscoveryProgressRequest,
+    DiscoveryStepResponse,
     FullPlanResponse,
+    QAPair,
     RoadmapResponse,
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+DISCOVERY_QUESTIONS: list[str] = [
+    "What are you trying to build ?",
+    "Who are your target users and what core problem are you solving for them?",
+    "What are your expected scale and performance requirements in the first 12 months?",
+    "What security/compliance constraints should the system satisfy (e.g., SOC2, GDPR, HIPAA)?",
+    "What is your MVP timeline and current team capacity?",
+]
 
 
 class CopilotEngine:
     def __init__(self) -> None:
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    async def generate_discovery_questions(self, payload: CopilotRequest) -> DiscoveryQuestionsResponse:
-        schema_hint = {
-            "questions": [
-                "What scale (users/requests) do you expect in year one?",
-                "What compliance/security requirements apply (SOC2, HIPAA, GDPR)?",
-                "What MVP launch timeline are you targeting?",
-            ]
-        }
-        user_prompt = (
-            "Generate architecture-impacting discovery questions. "
-            "Return JSON only matching this shape:\n"
-            f"{json.dumps(schema_hint)}\n\n"
-            "Rules: 3 to 8 concise questions, no marketing questions.\n\n"
-            "Project idea:\n"
-            f"{payload.project_idea}"
+    def get_discovery_step(self, payload: DiscoveryProgressRequest) -> DiscoveryStepResponse:
+        index = payload.question_index
+
+        if index == 0:
+            return self._build_discovery_response(answered_count=0)
+
+        if index > len(DISCOVERY_QUESTIONS):
+            raise HTTPException(
+                status_code=400,
+                detail=f"question_index must be between 0 and {len(DISCOVERY_QUESTIONS)}.",
+            )
+
+        return self._build_discovery_response(answered_count=index)
+
+    @staticmethod
+    def _build_discovery_response(answered_count: int) -> DiscoveryStepResponse:
+        is_complete = answered_count == len(DISCOVERY_QUESTIONS)
+        current_index = None if answered_count == 0 else answered_count
+        current_question = None if answered_count == 0 else DISCOVERY_QUESTIONS[answered_count - 1]
+        next_index = None if is_complete else answered_count + 1
+        next_question = None if is_complete else DISCOVERY_QUESTIONS[answered_count]
+        return DiscoveryStepResponse(
+            answered_count=answered_count,
+            is_complete=is_complete,
+            current_question_index=current_index,
+            current_question=current_question,
+            next_question_index=next_index,
+            next_question=next_question,
         )
-        data = await self._request_json(self._build_system_prompt(), user_prompt)
-        return self._validate_model(DiscoveryQuestionsResponse, data)
 
     async def generate_design_advice(self, payload: CopilotRequest) -> DesignAdviceResponse:
+        project_idea = self._extract_project_idea(payload)
+        grounded_prompt = self._build_grounded_user_prompt(payload.qa_context)
         schema_hint = {
             "recommended_tech_stack": [
                 {
@@ -62,7 +85,9 @@ class CopilotEngine:
             "Generate system design recommendations. Return JSON only matching this shape:\n"
             f"{json.dumps(schema_hint)}\n\n"
             "Project idea:\n"
-            f"{payload.project_idea}\n\n"
+            f"{project_idea}\n\n"
+            "Grounded discovery context:\n"
+            f"{grounded_prompt}\n\n"
             "Q/A context:\n"
             f"{json.dumps([item.model_dump() for item in payload.qa_context], indent=2)}"
         )
@@ -70,6 +95,8 @@ class CopilotEngine:
         return self._validate_model(DesignAdviceResponse, data)
 
     async def generate_roadmap(self, payload: CopilotRequest) -> RoadmapResponse:
+        project_idea = self._extract_project_idea(payload)
+        grounded_prompt = self._build_grounded_user_prompt(payload.qa_context)
         schema_hint = {
             "mvp_core_features": [
                 {
@@ -102,7 +129,9 @@ class CopilotEngine:
             "Return JSON only matching this shape:\n"
             f"{json.dumps(schema_hint)}\n\n"
             "Project idea:\n"
-            f"{payload.project_idea}\n\n"
+            f"{project_idea}\n\n"
+            "Grounded discovery context:\n"
+            f"{grounded_prompt}\n\n"
             "Q/A context:\n"
             f"{json.dumps([item.model_dump() for item in payload.qa_context], indent=2)}"
         )
@@ -122,6 +151,29 @@ class CopilotEngine:
             "Do not output markdown or code fences. Output only valid JSON. "
             f"Grounding context: {json.dumps(CURATED_KNOWLEDGE_BASE)}"
         )
+
+    @staticmethod
+    def _build_grounded_user_prompt(answers: list[QAPair]) -> str:
+        if not answers:
+            return (
+                "Empty,no prompt provided yet"
+            )
+
+        project_idea = answers[0].answer.strip()
+        lines = [f"Project intent: {project_idea}"]
+        lines.append("Discovery Q/A captured so far:")
+        for item in answers:
+            lines.append(f"- Q: {item.question}")
+            lines.append(f"  A: {item.answer}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_project_idea(payload: CopilotRequest) -> str:
+        if payload.project_idea:
+            return payload.project_idea
+        if payload.qa_context:
+            return payload.qa_context[0].answer
+        raise HTTPException(status_code=400, detail="No project idea available in request context.")
 
     async def _request_json(self, system_prompt: str, user_prompt: str) -> dict:
         if not settings.openai_api_key:
