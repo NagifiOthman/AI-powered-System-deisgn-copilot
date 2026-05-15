@@ -67,7 +67,17 @@ uvicorn app.main:app --reload
 
 Repeat step 2 for indexes 2..5 until `is_complete` is `true`.
 
-## Example planning request
+## Planning generation after discovery
+
+After all 5 discovery answers are submitted, generate outputs without re-sending `qa_context`:
+
+- `POST /api/v1/design-advice`
+- `POST /api/v1/roadmap`
+- `POST /api/v1/full-plan`
+
+The backend uses the stored discovery Q/A context as the single source of truth.
+
+## Example discovery-derived context
 
 ```json
 {

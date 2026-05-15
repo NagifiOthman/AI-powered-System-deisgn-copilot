@@ -8,7 +8,6 @@ from pydantic import BaseModel, ValidationError
 from app.config import settings
 from app.knowledge.curated_knowledge import CURATED_KNOWLEDGE_BASE
 from app.models import (
-    CopilotRequest,
     DesignAdviceResponse,
     DiscoveryProgressRequest,
     DiscoveryStepResponse,
@@ -31,11 +30,13 @@ DISCOVERY_QUESTIONS: list[str] = [
 class CopilotEngine:
     def __init__(self) -> None:
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._discovery_answers: list[QAPair] = []
 
     def get_discovery_step(self, payload: DiscoveryProgressRequest) -> DiscoveryStepResponse:
         index = payload.question_index
 
         if index == 0:
+            self._discovery_answers = []
             return self._build_discovery_response(answered_count=0)
 
         if index > len(DISCOVERY_QUESTIONS):
@@ -44,7 +45,38 @@ class CopilotEngine:
                 detail=f"question_index must be between 0 and {len(DISCOVERY_QUESTIONS)}.",
             )
 
-        return self._build_discovery_response(answered_count=index)
+        expected_answered_count = index - 1
+        if len(self._discovery_answers) < expected_answered_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Answer question {len(self._discovery_answers) + 1} before question {index}.",
+            )
+
+        question = DISCOVERY_QUESTIONS[index - 1]
+        qa_item = QAPair(question=question, answer=payload.answer.strip())
+
+        if len(self._discovery_answers) == expected_answered_count:
+            self._discovery_answers.append(qa_item)
+        else:
+            self._discovery_answers[index - 1] = qa_item
+            del self._discovery_answers[index:]
+
+        return self._build_discovery_response(answered_count=len(self._discovery_answers))
+
+    def _require_completed_discovery_context(self) -> tuple[str, list[QAPair]]:
+        total = len(DISCOVERY_QUESTIONS)
+        answered = len(self._discovery_answers)
+        if answered < total:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Complete discovery before generating plans. "
+                    f"Answered {answered}/{total} questions."
+                ),
+            )
+
+        project_idea = self._discovery_answers[0].answer.strip()
+        return project_idea, list(self._discovery_answers)
 
     @staticmethod
     def _build_discovery_response(answered_count: int) -> DiscoveryStepResponse:
@@ -62,9 +94,9 @@ class CopilotEngine:
             next_question=next_question,
         )
 
-    async def generate_design_advice(self, payload: CopilotRequest) -> DesignAdviceResponse:
-        project_idea = self._extract_project_idea(payload)
-        grounded_prompt = self._build_grounded_user_prompt(payload.qa_context)
+    async def generate_design_advice(self) -> DesignAdviceResponse:
+        project_idea, qa_context = self._require_completed_discovery_context()
+        grounded_prompt = self._build_grounded_user_prompt(qa_context)
         schema_hint = {
             "recommended_tech_stack": [
                 {
@@ -89,14 +121,14 @@ class CopilotEngine:
             "Grounded discovery context:\n"
             f"{grounded_prompt}\n\n"
             "Q/A context:\n"
-            f"{json.dumps([item.model_dump() for item in payload.qa_context], indent=2)}"
+            f"{json.dumps([item.model_dump() for item in qa_context], indent=2)}"
         )
         data = await self._request_json(self._build_system_prompt(), user_prompt)
         return self._validate_model(DesignAdviceResponse, data)
 
-    async def generate_roadmap(self, payload: CopilotRequest) -> RoadmapResponse:
-        project_idea = self._extract_project_idea(payload)
-        grounded_prompt = self._build_grounded_user_prompt(payload.qa_context)
+    async def generate_roadmap(self) -> RoadmapResponse:
+        project_idea, qa_context = self._require_completed_discovery_context()
+        grounded_prompt = self._build_grounded_user_prompt(qa_context)
         schema_hint = {
             "mvp_core_features": [
                 {
@@ -133,14 +165,14 @@ class CopilotEngine:
             "Grounded discovery context:\n"
             f"{grounded_prompt}\n\n"
             "Q/A context:\n"
-            f"{json.dumps([item.model_dump() for item in payload.qa_context], indent=2)}"
+            f"{json.dumps([item.model_dump() for item in qa_context], indent=2)}"
         )
         data = await self._request_json(self._build_system_prompt(), user_prompt)
         return self._validate_model(RoadmapResponse, data)
 
-    async def generate_full_plan(self, payload: CopilotRequest) -> FullPlanResponse:
-        design_advice = await self.generate_design_advice(payload)
-        roadmap = await self.generate_roadmap(payload)
+    async def generate_full_plan(self) -> FullPlanResponse:
+        design_advice = await self.generate_design_advice()
+        roadmap = await self.generate_roadmap()
         return FullPlanResponse(design_advice=design_advice, roadmap=roadmap)
 
     @staticmethod
@@ -166,14 +198,6 @@ class CopilotEngine:
             lines.append(f"- Q: {item.question}")
             lines.append(f"  A: {item.answer}")
         return "\n".join(lines)
-
-    @staticmethod
-    def _extract_project_idea(payload: CopilotRequest) -> str:
-        if payload.project_idea:
-            return payload.project_idea
-        if payload.qa_context:
-            return payload.qa_context[0].answer
-        raise HTTPException(status_code=400, detail="No project idea available in request context.")
 
     async def _request_json(self, system_prompt: str, user_prompt: str) -> dict:
         if not settings.openai_api_key:
