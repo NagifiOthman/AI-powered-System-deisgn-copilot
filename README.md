@@ -48,24 +48,32 @@ uvicorn app.main:app --reload
 
 ## Discovery flow example (sequential)
 
-1) Start discovery (fetch first question):
+1) Ask for the first discovery question:
 
 ```json
-{
-	"question_index": 0
-}
+{}
 ```
 
-2) Submit one answer using the current question index:
+2) Submit one answer for the currently asked question:
 
 ```json
 {
-	"question_index": 1,
 	"answer": "An AI copilot that generates system design plans from product ideas."
 }
 ```
 
-Repeat step 2 for indexes 2..5 until `is_complete` is `true`.
+Repeat step 2 until `is_complete` is `true`.
+
+Notes:
+- The backend controls question order and index progression.
+- If you request another question before answering the current one, you get a validation error.
+- To restart discovery from question 1, call:
+
+```json
+{
+	"restart": true
+}
+```
 
 ## Planning generation after discovery
 

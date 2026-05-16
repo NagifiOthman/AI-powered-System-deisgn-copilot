@@ -31,37 +31,73 @@ class CopilotEngine:
     def __init__(self) -> None:
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
         self._discovery_answers: list[QAPair] = []
+        self._pending_question_index: int | None = None
 
     def get_discovery_step(self, payload: DiscoveryProgressRequest) -> DiscoveryStepResponse:
-        index = payload.question_index
-
-        if index == 0:
+        if payload.restart:
             self._discovery_answers = []
-            return self._build_discovery_response(answered_count=0)
+            self._pending_question_index = None
 
-        if index > len(DISCOVERY_QUESTIONS):
+        total_questions = len(DISCOVERY_QUESTIONS)
+        answered_count = len(self._discovery_answers)
+
+        if answered_count > total_questions:
             raise HTTPException(
-                status_code=400,
-                detail=f"question_index must be between 0 and {len(DISCOVERY_QUESTIONS)}.",
+                status_code=500,
+                detail="Discovery state is invalid: too many stored answers.",
             )
 
-        expected_answered_count = index - 1
-        if len(self._discovery_answers) < expected_answered_count:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Answer question {len(self._discovery_answers) + 1} before question {index}.",
+        if answered_count == total_questions:
+            if payload.answer is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Discovery is already complete. Use restart=true to start over.",
+                )
+            return self._build_discovery_complete_response(answered_count)
+
+        if payload.answer is None:
+            if self._pending_question_index is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Current discovery question is already asked. "
+                        "Submit an answer before requesting another question."
+                    ),
+                )
+
+            self._pending_question_index = answered_count
+            return self._build_discovery_question_response(
+                answered_count=answered_count,
+                question_index=self._pending_question_index,
             )
 
-        question = DISCOVERY_QUESTIONS[index - 1]
-        qa_item = QAPair(question=question, answer=payload.answer.strip())
+        if self._pending_question_index is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No active discovery question. Request a question first.",
+            )
 
-        if len(self._discovery_answers) == expected_answered_count:
-            self._discovery_answers.append(qa_item)
-        else:
-            self._discovery_answers[index - 1] = qa_item
-            del self._discovery_answers[index:]
+        expected_question = DISCOVERY_QUESTIONS[self._pending_question_index]
+        self._discovery_answers.append(
+            QAPair(question=expected_question, answer=payload.answer.strip())
+        )
+        self._pending_question_index = None
 
-        return self._build_discovery_response(answered_count=len(self._discovery_answers))
+        answered_count = len(self._discovery_answers)
+        if answered_count > total_questions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Discovery supports exactly {total_questions} questions.",
+            )
+
+        if answered_count == total_questions:
+            return self._build_discovery_complete_response(answered_count)
+
+        self._pending_question_index = answered_count
+        return self._build_discovery_question_response(
+            answered_count=answered_count,
+            question_index=self._pending_question_index,
+        )
 
     def _require_completed_discovery_context(self) -> tuple[str, list[QAPair]]:
         total = len(DISCOVERY_QUESTIONS)
@@ -79,19 +115,29 @@ class CopilotEngine:
         return project_idea, list(self._discovery_answers)
 
     @staticmethod
-    def _build_discovery_response(answered_count: int) -> DiscoveryStepResponse:
-        is_complete = answered_count == len(DISCOVERY_QUESTIONS)
-        current_index = None if answered_count == 0 else answered_count
-        current_question = None if answered_count == 0 else DISCOVERY_QUESTIONS[answered_count - 1]
-        next_index = None if is_complete else answered_count + 1
-        next_question = None if is_complete else DISCOVERY_QUESTIONS[answered_count]
+    def _build_discovery_question_response(answered_count: int, question_index: int) -> DiscoveryStepResponse:
+        question_number = question_index + 1
+        question_text = DISCOVERY_QUESTIONS[question_index]
         return DiscoveryStepResponse(
             answered_count=answered_count,
-            is_complete=is_complete,
-            current_question_index=current_index,
-            current_question=current_question,
-            next_question_index=next_index,
-            next_question=next_question,
+            is_complete=False,
+            awaiting_answer=True,
+            current_question_index=question_number,
+            current_question=question_text,
+            next_question_index=question_number,
+            next_question=question_text,
+        )
+
+    @staticmethod
+    def _build_discovery_complete_response(answered_count: int) -> DiscoveryStepResponse:
+        return DiscoveryStepResponse(
+            answered_count=answered_count,
+            is_complete=True,
+            awaiting_answer=False,
+            current_question_index=None,
+            current_question=None,
+            next_question_index=None,
+            next_question=None,
         )
 
     async def generate_design_advice(self) -> DesignAdviceResponse:

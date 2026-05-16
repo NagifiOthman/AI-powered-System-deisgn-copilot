@@ -29,23 +29,21 @@ class CopilotRequest(BaseModel):
 
 
 class DiscoveryProgressRequest(BaseModel):
-    question_index: int = Field(
-        default=0,
-        ge=0,
-        le=5,
-        description="Question index being answered. Use 0 to fetch the first question.",
-    )
     answer: str | None = Field(
         default=None,
-        description="Answer for the specified question index (required for index 1..5).",
+        description="Answer for the currently asked discovery question.",
+    )
+    restart: bool = Field(
+        default=False,
+        description="Restart discovery from question 1 and clear previously collected answers.",
     )
 
     @model_validator(mode="after")
     def validate_discovery_step(self):
-        if self.question_index == 0 and self.answer:
-            raise ValueError("Do not provide an answer when question_index is 0.")
-        if self.question_index > 0 and (self.answer is None or not self.answer.strip()):
-            raise ValueError("Provide a non-empty answer for question_index 1..5.")
+        if self.restart and self.answer is not None:
+            raise ValueError("Do not provide an answer when restart is true.")
+        if self.answer is not None and not self.answer.strip():
+            raise ValueError("answer cannot be empty when provided.")
         return self
 
 
@@ -53,6 +51,7 @@ class DiscoveryStepResponse(BaseModel):
     total_questions: int = 5
     answered_count: int
     is_complete: bool
+    awaiting_answer: bool
     current_question_index: int | None
     current_question: str | None
     next_question_index: int | None
