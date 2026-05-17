@@ -5,6 +5,8 @@ from app.models import (
     DiscoveryProgressRequest,
     DiscoveryStepResponse,
     FullPlanResponse,
+    RequirementsContextRequest,
+    RequirementsContextResponse,
     RoadmapResponse,
 )
 from app.services.copilot_engine import copilot_engine
@@ -14,7 +16,12 @@ router = APIRouter(tags=["Copilot"])
 
 @router.post("/discovery-questions", response_model=DiscoveryStepResponse)
 async def discovery_questions(payload: DiscoveryProgressRequest) -> DiscoveryStepResponse:
-    return copilot_engine.get_discovery_step(payload)
+    return await copilot_engine.get_discovery_step(payload)
+
+
+@router.post("/requirements-context", response_model=RequirementsContextResponse)
+async def requirements_context(payload: RequirementsContextRequest) -> RequirementsContextResponse:
+    return await copilot_engine.set_requirements_context(payload)
 
 
 @router.post("/design-advice", response_model=DesignAdviceResponse)

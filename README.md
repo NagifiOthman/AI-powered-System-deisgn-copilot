@@ -41,6 +41,7 @@ uvicorn app.main:app --reload
 ## API endpoints
 
 - `POST /api/v1/discovery-questions`
+- `POST /api/v1/requirements-context`
 - `POST /api/v1/design-advice`
 - `POST /api/v1/roadmap`
 - `POST /api/v1/full-plan`
@@ -64,9 +65,10 @@ uvicorn app.main:app --reload
 
 Repeat step 2 until `is_complete` is `true`.
 
-Notes:
+Important Notes:
 - The backend controls question order and index progression.
 - If you request another question before answering the current one, you get a validation error.
+- Discovery answers are validated by the LLM; out-of-context answers are rejected with 400.
 - To restart discovery from question 1, call:
 
 ```json
@@ -75,9 +77,29 @@ Notes:
 }
 ```
 
+## Requirements context (after discovery)
+
+After discovery is complete, submit functional and non-functional requirements:
+
+```json
+{
+	"functional_requirements": [
+		"Users can create and save system design projects",
+		"Users can generate architecture recommendations from product briefs"
+	],
+	"non_functional_requirements": [
+		"P95 API latency under 2 seconds for design generation requests",
+		"SOC2-ready audit logging for user and admin actions"
+	]
+}
+```
+
+This payload is validated by the LLM and normalized before being stored.
+
 ## Planning generation after discovery
 
-After all 5 discovery answers are submitted, generate outputs without re-sending `qa_context`:
+After all 5 discovery answers are submitted **and** requirements context is accepted,
+generate outputs without re-sending `qa_context`:
 
 - `POST /api/v1/design-advice`
 - `POST /api/v1/roadmap`
