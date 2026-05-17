@@ -58,6 +58,34 @@ class DiscoveryStepResponse(BaseModel):
     next_question: str | None
 
 
+class RequirementsContextRequest(BaseModel):
+    functional_requirements: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description="Functional requirements list (what the system must do).",
+    )
+    non_functional_requirements: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description="Non-functional requirements list (quality attributes and constraints).",
+    )
+
+    @model_validator(mode="after")
+    def validate_items(self):
+        if any(not item.strip() for item in self.functional_requirements):
+            raise ValueError("functional_requirements cannot contain empty values.")
+        if any(not item.strip() for item in self.non_functional_requirements):
+            raise ValueError("non_functional_requirements cannot contain empty values.")
+        return self
+
+
+class RequirementsContextResponse(BaseModel):
+    is_valid: bool
+    message: str
+    functional_requirements: list[str]
+    non_functional_requirements: list[str]
+
+
 class TechRecommendation(BaseModel):
     component: str
     recommendation: str
